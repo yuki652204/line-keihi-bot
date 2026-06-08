@@ -36,6 +36,19 @@ export async function insertExpenseIfNotDuplicate(
   return { inserted: true, data: data as Expense }
 }
 
+
+export async function getYearlyExpenses(lineUserId: string, year: number) {
+  const { data, error } = await supabase
+    .from('keihi_expenses')
+    .select('*')
+    .eq('line_user_id', lineUserId)
+    .gte('date', `${year}-01-01`)
+    .lte('date', `${year}-12-31`)
+    .order('date', { ascending: true })
+  if (error) throw error
+  return data as Expense[]
+}
+
 export async function getMonthlyExpenses(lineUserId: string, year: number, month: number) {
   const startDate = `${year}-${String(month).padStart(2, '0')}-01`
   const lastDay = new Date(year, month, 0).getDate()

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { waitUntil } from '@vercel/functions'
 import { verifyLineSignature, replyMessage, pushMessage, getLineImageContent, getLineFileContent, textMessage } from '@/lib/line'
 import { extractExpenseFromImage, classifyCsvExpenses } from '@/lib/anthropic'
-import { insertExpenseIfNotDuplicate, getMonthlyExpenses } from '@/lib/supabase'
+import { insertExpenseIfNotDuplicate, getMonthlyExpenses, getYearlyExpenses } from '@/lib/supabase'
 
 export const maxDuration = 60
 
@@ -155,21 +155,57 @@ function parseTargetMonth(text: string): { year: number; month: number; label: s
   return null
 }
 
-async function handleTextMessage(replyToken: string, userId: string, text: string) {
-  const isSummaryRequest = text.includes('経費まとめて') || text.includes('経費まとめ')
 
-  if (!isSummaryRequest) {
+async function handleTextMessage(replyToken: string, userId: string, text: string) {
+  // 使い方
+  if (text.includes('使い方')) {
     await replyMessage(replyToken, [
-      textMessage(
-        '以下の操作ができます：\n\n📸 領収書画像を送る → 自動で経費登録\n📄 CSVファイルを送る → 一括登録\n\n💬 集計コマンド:\n・「今月の経費まとめて」\n・「先月の経費まとめて」\n・「5月の経費まとめて」'
-      ),
+      textMessage('📖 使い方\n・レシート写真を送る → 自動登録\n・CSVファイルを送る → 一括登録\n・〇月の経費まとめて → 月次集計\n・〇月の経費をCSVで → 明細リスト'),
+    ])
+    return
+  }
+
+  // 今年の経費合計
+  if (text.includes('今年の経費合計')) {
+    const year = new Date().getFullYear()
+    const expenses = await getYearlyExpenses(userId, year)
+    const byMonth: Record<number, { total: number; count: number }> = {}
+    for (const e of expenses) {
+      const m = new Date(e.date).getMonth() + 1
+      if (!byMonth[m]) byMonth[m] = { total: 0, count: 0 }
+      byMonth[m].total += e.amount
+      byMonth[m].count++
+    }
+    const monthLines = Array.from({ length: 12 }, (_, i) => {
+      const m = i + 1
+      const d = byMonth[m]
+      const label = String(m).padStart(2, ' ') + '月'
+      return d ? `${label}：¥${d.total.toLocaleString()}（${d.count}件）` : `${label}：¥0（0件）`
+    }).join('\n')
+    const total = expenses.reduce((s, e) => s + e.amount, 0)
+    const sep = '━━━━━━━━━━━━━'
+    await replyMessage(replyToken, [
+      textMessage([`📊 ${year}年 経費合計`, '', monthLines, '', sep, `年間合計：¥${total.toLocaleString()}（${expenses.length}件）`].join('\n')),
+    ])
+    return
+  }
+
+  const isCsvRequest = text.includes('CSVで')
+  const isSummaryRequest = !isCsvRequest && (text.includes('経費まとめて') || text.includes('経費まとめ'))
+
+  if (!isCsvRequest && !isSummaryRequest) {
+    await replyMessage(replyToken, [
+      textMessage('以下の操作ができます：\n\n📸 領収書画像を送る → 自動で経費登録\n📄 CSVファイルを送る → 一括登録\n\n💬 集計:\n・「今月の経費まとめて」\n・「先月の経費まとめて」\n・「5月の経費まとめて」\n\n📥 明細リスト:\n・「今月の経費をCSVで」\n・「先月の経費をCSVで」\n\n💹「今年の経費合計」→ 年次集計'),
     ])
     return
   }
 
   const target = parseTargetMonth(text)
   if (!target) {
-    await replyMessage(replyToken, [textMessage('月を指定してください。例：「今月の経費まとめて」「先月の経費まとめて」「5月の経費まとめて」')])
+    const example = isCsvRequest
+      ? '「今月の経費をCSVで」「先月の経費をCSVで」「6月の経費をCSVで」'
+      : '「今月の経費まとめて」「先月の経費まとめて」「5月の経費まとめて」'
+    await replyMessage(replyToken, [textMessage(`月を指定してください。例：${example}`)])
     return
   }
 
@@ -181,6 +217,26 @@ async function handleTextMessage(replyToken: string, userId: string, text: strin
   }
 
   const total = expenses.reduce((sum, e) => sum + e.amount, 0)
+
+  if (isCsvRequest) {
+    const items = expenses.map((e) => {
+      const date = e.date.replace(/-/g, '/')
+      const lines = [`${date} ¥${e.amount.toLocaleString()}`, `　取引先：${e.vendor}`, `　科目：${e.category}`]
+      if (e.memo) lines.push(`　備考：${e.memo}`)
+      return lines.join('\n')
+    })
+    const listText = [
+      `📄 ${target.label} 経費データ`,
+      '',
+      items.join('\n\n'),
+      '',
+      '---',
+      `合計：¥${total.toLocaleString()}（${expenses.length}件）`,
+    ].join('\n')
+    await replyMessage(replyToken, [textMessage(listText)])
+    return
+  }
+
   const byCategory: Record<string, number> = {}
   for (const e of expenses) {
     byCategory[e.category] = (byCategory[e.category] || 0) + e.amount
@@ -191,8 +247,7 @@ async function handleTextMessage(replyToken: string, userId: string, text: strin
   const detailLines = expenses
     .map((e) => {
       const d = new Date(e.date)
-      const mmdd = `${d.getMonth() + 1}/${d.getDate()}`
-      return `${mmdd} ${e.vendor}\n　${e.category} ¥${e.amount.toLocaleString()}`
+      return `${d.getMonth() + 1}/${d.getDate()} ${e.vendor}\n　${e.category} ¥${e.amount.toLocaleString()}`
     })
     .join('\n\n')
 
@@ -200,20 +255,7 @@ async function handleTextMessage(replyToken: string, userId: string, text: strin
     .map(([cat, amt]) => `${cat}：¥${amt.toLocaleString()}`)
     .join('\n')
 
-  const summaryText = [
-    sep,
-    `📊 ${target.label}の経費まとめ`,
-    sep,
-    `件数：${expenses.length}件`,
-    `合計：¥${total.toLocaleString()}`,
-    '',
-    '【明細】',
-    detailLines,
-    '',
-    '【科目別合計】',
-    categoryLines,
-    sep,
-  ].join('\n')
+  const summaryText = [sep, `📊 ${target.label}の経費まとめ`, sep, `件数：${expenses.length}件`, `合計：¥${total.toLocaleString()}`, '', '【明細】', detailLines, '', '【科目別合計】', categoryLines, sep].join('\n')
 
   await replyMessage(replyToken, [textMessage(summaryText)])
 }

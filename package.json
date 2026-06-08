@@ -13,9 +13,11 @@
     "@line/bot-sdk": "^11.0.1",
     "@supabase/supabase-js": "^2.107.0",
     "@vercel/functions": "^3.6.2",
+    "dotenv": "^17.4.2",
     "next": "16.2.7",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@types/node": "^20",
@@ -23,6 +25,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.7",
+    "tsx": "^4.22.4",
     "typescript": "^5"
   }
 }

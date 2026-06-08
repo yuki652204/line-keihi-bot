@@ -54,6 +54,7 @@ export function textMessage(text: string): LineTextMessage {
   return { type: 'text', text }
 }
 
+
 export async function pushMessage(userId: string, messages: LineMessage[]): Promise<void> {
   await fetch('https://api.line.me/v2/bot/message/push', {
     method: 'POST',
