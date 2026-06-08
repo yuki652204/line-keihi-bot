@@ -20,7 +20,7 @@ const buttons = [
   { label: '今月の経費をCSVで', icon: '📄', color: '#C97A0A', action: '今月の経費をCSVで' },
   { label: '先月の経費をCSVで', icon: '📋', color: '#B06A08', action: '先月の経費をCSVで' },
   { label: '使い方',            icon: '📖', color: '#4A5568', action: '使い方'            },
-  { label: '今年の経費合計',    icon: '💹', color: '#5B21B6', action: '今年の経費合計'    },
+  { label: '今年の経費まとめて', icon: '💹', color: '#5B21B6', action: '今年の経費まとめて' },
 ]
 
 function buildSvg(): string {

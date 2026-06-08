@@ -76,6 +76,32 @@ export async function getYearlyExpenses(lineUserId: string, year: number) {
   return data as Expense[]
 }
 
+export async function deleteAllExpenses(lineUserId: string): Promise<number> {
+  const client = createUserSupabaseClient(lineUserId)
+
+  const { data, error } = await client
+    .from('keihi_expenses')
+    .delete()
+    .eq('line_user_id', lineUserId)
+    .select('id')
+
+  if (error) throw error
+  return data?.length ?? 0
+}
+
+export async function getAllExpenses(lineUserId: string) {
+  const client = createUserSupabaseClient(lineUserId)
+
+  const { data, error } = await client
+    .from('keihi_expenses')
+    .select('*')
+    .eq('line_user_id', lineUserId)
+    .order('date', { ascending: true })
+
+  if (error) throw error
+  return data as Expense[]
+}
+
 export async function getMonthlyExpenses(lineUserId: string, year: number, month: number) {
   const client = createUserSupabaseClient(lineUserId)
 
