@@ -59,43 +59,37 @@ A LINE chatbot that automates expense tracking using AI. Send a receipt photo an
 
 ---
 
-## アーキテクチャ
+## Architecture
+
+### インフラ構成
 
 ```
 LINEユーザー
-    │
-    │ メッセージ送信
-    ▼
-LINE Messaging API
-    │
-    │ Webhook POST
-    ▼
-┌─────────────────────────────────────┐
-│  Vercel (Next.js App Router)         │
-│                                      │
-│  POST /api/webhook                   │
-│   ├─ 署名検証（HMAC-SHA256）          │
-│   ├─ [画像] → waitUntil()            │
-│   │   └─ Claude Vision で抽出        │
-│   │   └─ Supabase に保存             │
-│   │   └─ pushMessage で結果返信      │
-│   ├─ [CSVファイル] → waitUntil()     │
-│   │   └─ Claude APIで分類            │
-│   │   └─ 重複チェック後 一括保存      │
-│   └─ [テキスト]                      │
-│       ├─ 月次/年次集計 → 返信         │
-│       └─ 明細リスト生成 → 返信        │
-└──────────────┬──────────────────────┘
-               │
-    ┌──────────┴──────────┐
-    ▼                     ▼
-Supabase              Anthropic
-(PostgreSQL)          Claude API
-keihi_expenses
+    ↓ Webhook（HMAC-SHA256署名検証）
+Vercel / Next.js（line-keihi-bot.vercel.app）
+├── ① LINE署名検証
+├── ② メッセージ種別判定（画像/CSV/テキスト）
+├── ③ ユーザーごとJWT生成
+└── ④ waitUntil()で非同期処理
+    ├── Claude API（claude-sonnet）
+    │   ├── 画像 → 経費情報抽出
+    │   └── CSV → 勘定科目自動分類
+    └── Supabase（PostgreSQL）
+        ├── RLSでユーザーデータ完全分離
+        └── keihi_expensesテーブル
 ```
 
-**タイムアウト対策**: 画像・CSV処理は `waitUntil()` でバックグラウンド実行。  
-LINEに即座に「解析中...」を返信し、処理完了後に `pushMessage` で結果送信。
+### セキュリティ三重防御
+
+| レイヤー | 技術 | 内容 |
+|---|---|---|
+| ① | LINE署名検証 | HMAC-SHA256でなりすまし防止 |
+| ② | JWT認証 | ユーザーごとのトークン発行 |
+| ③ | Supabase RLS | DBレベルでデータ完全分離 |
+
+### CI/CD
+
+GitHub（yuki652204/line-keihi-bot）→ Vercel自動デプロイ
 
 ---
 
