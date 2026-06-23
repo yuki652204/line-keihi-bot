@@ -2,7 +2,6 @@ import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 import { waitUntil } from '@vercel/functions'
 
-export const runtime = 'edge'
 
 async function notifyAdmin(message: string) {
   try {
