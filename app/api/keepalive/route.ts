@@ -1,10 +1,14 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
+import { waitUntil } from '@vercel/functions'
 
 export const runtime = 'edge'
 
 async function notifyAdmin(message: string) {
   try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 5000)
+
     await fetch('https://api.line.me/v2/bot/message/push', {
       method: 'POST',
       headers: {
@@ -15,7 +19,10 @@ async function notifyAdmin(message: string) {
         to: process.env.LINE_ADMIN_USER_ID,
         messages: [{ type: 'text', text: message }],
       }),
+      signal: controller.signal,
     })
+
+    clearTimeout(timeout)
   } catch (e) {
     console.error('Failed to notify admin via LINE:', e)
   }
@@ -26,10 +33,11 @@ export async function GET(req: NextRequest) {
   const auth = req.headers.get('authorization') ?? ''
 
   if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
-    // Vercelの本物のcronからの失敗だけ通知する（外部スキャン等のノイズは無視）
     if (isVercelCron) {
-      await notifyAdmin(
-        '⚠️ keepalive失敗: CRON_SECRETの認証に失敗しました。Vercelの環境変数を確認してください。'
+      waitUntil(
+        notifyAdmin(
+          '⚠️ keepalive失敗: CRON_SECRETの認証に失敗しました。Vercelの環境変数を確認してください。'
+        )
       )
     }
     return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
@@ -44,14 +52,14 @@ export async function GET(req: NextRequest) {
     const { error } = await supabase.from('keihi_expenses').select('id').limit(1)
 
     if (error) {
-      await notifyAdmin(`⚠️ keepalive失敗: Supabaseクエリエラー\n${error.message}`)
+      waitUntil(notifyAdmin(`⚠️ keepalive失敗: Supabaseクエリエラー\n${error.message}`))
       return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
     }
 
     return NextResponse.json({ ok: true, ts: new Date().toISOString() })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'unknown error'
-    await notifyAdmin(`⚠️ keepalive失敗: 予期しないエラー\n${msg}`)
+    waitUntil(notifyAdmin(`⚠️ keepalive失敗: 予期しないエラー\n${msg}`))
     return NextResponse.json({ ok: false, error: msg }, { status: 500 })
   }
 }
