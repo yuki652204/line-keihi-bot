@@ -28,6 +28,17 @@ function createUserSupabaseClient(lineUserId: string) {
   })
 }
 
+// keihi_export_tokensにはRLSが無く、トークン単体が認可情報になるため、
+// トークン検証だけはservice_role（RLSバイパス）で行う
+function createServiceRoleSupabaseClient() {
+  return createClient(supabaseUrl, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  })
+}
+
 export interface Expense {
   id?: string
   line_user_id: string
@@ -337,4 +348,114 @@ export async function getMonthlyExpenses(lineUserId: string, year: number, month
 
   if (error) throw error
   return data as Expense[]
+}
+
+// 税理士向けCSVエクスポート用のダウンロードトークンを発行（有効期限24時間）
+export async function createExportToken(
+  lineUserId: string,
+  year: number,
+  month: number
+): Promise<{ token: string; expiresAt: string }> {
+  const client = createUserSupabaseClient(lineUserId)
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+
+  const { data, error } = await client
+    .from('keihi_export_tokens')
+    .insert({ line_user_id: lineUserId, year, month, expires_at: expiresAt })
+    .select('token')
+    .single()
+
+  if (error) throw error
+  return { token: data.token as string, expiresAt }
+}
+
+export interface ExportTokenInfo {
+  line_user_id: string
+  year: number
+  month: number
+}
+
+// トークンの存在・期限をservice_roleで検証（未認証のダウンロードURLからのアクセスのため）
+export async function validateExportToken(token: string): Promise<ExportTokenInfo | null> {
+  const client = createServiceRoleSupabaseClient()
+
+  const { data, error } = await client
+    .from('keihi_export_tokens')
+    .select('line_user_id, year, month, expires_at')
+    .eq('token', token)
+    .maybeSingle()
+
+  if (error) throw error
+  if (!data) return null
+  if (new Date(data.expires_at).getTime() < Date.now()) return null
+
+  return { line_user_id: data.line_user_id, year: data.year, month: data.month }
+}
+
+export interface ExportRow {
+  date: string
+  amount: number
+  vendor: string
+  category: string
+  memo: string | null
+  invoice_status: InvoiceJudgmentStatus | null
+  invoice_reason_code: InvoiceReasonCode | null
+  invoice_comment: string | null
+  shogaku_tokurei_applied: boolean | null
+  deduction_rate: number | null
+}
+
+interface KeihiExpenseWithJudgments extends Expense {
+  invoice_judgments: InvoiceJudgment[] | InvoiceJudgment | null
+}
+
+// 対象月のkeihi_expensesとinvoice_judgmentsをJOINし、控除率も突合してCSV出力用データを組み立てる
+export async function getExportData(lineUserId: string, year: number, month: number): Promise<ExportRow[]> {
+  const client = createUserSupabaseClient(lineUserId)
+
+  const startDate = `${year}-${String(month).padStart(2, '0')}-01`
+  const lastDay = new Date(year, month, 0).getDate()
+  const endDate = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+
+  const [{ data: expenses, error: expensesError }, { data: rates, error: ratesError }] = await Promise.all([
+    client
+      .from('keihi_expenses')
+      .select('*, invoice_judgments(*)')
+      .eq('line_user_id', lineUserId)
+      .gte('date', startDate)
+      .lte('date', endDate)
+      .order('date', { ascending: true }),
+    client.from('invoice_deduction_rates').select('start_date, end_date, deduction_rate'),
+  ])
+
+  if (expensesError) throw expensesError
+  if (ratesError) throw ratesError
+
+  const findDeductionRate = (date: string): number | null => {
+    const match = (rates ?? []).find((r) => date >= r.start_date && date <= r.end_date)
+    return match ? Number(match.deduction_rate) : null
+  }
+
+  return ((expenses ?? []) as unknown as KeihiExpenseWithJudgments[]).map((expense) => {
+    const judgments = Array.isArray(expense.invoice_judgments)
+      ? expense.invoice_judgments
+      : expense.invoice_judgments
+        ? [expense.invoice_judgments]
+        : []
+    const latestJudgment =
+      [...judgments].sort((a, b) => (b.judged_at ?? '').localeCompare(a.judged_at ?? ''))[0] ?? null
+
+    return {
+      date: expense.date,
+      amount: expense.amount,
+      vendor: expense.vendor,
+      category: expense.category,
+      memo: expense.memo ?? null,
+      invoice_status: latestJudgment?.status ?? null,
+      invoice_reason_code: latestJudgment?.reason_code ?? null,
+      invoice_comment: latestJudgment?.comment ?? null,
+      shogaku_tokurei_applied: latestJudgment?.shogaku_tokurei_applied ?? null,
+      deduction_rate: findDeductionRate(expense.date),
+    }
+  })
 }

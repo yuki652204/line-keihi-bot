@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { waitUntil } from '@vercel/functions'
 import { verifyLineSignature, replyMessage, pushMessage, getLineImageContent, getLineFileContent, textMessage } from '@/lib/line'
 import { extractExpenseFromImage, classifyCsvExpenses } from '@/lib/anthropic'
-import { insertExpenseIfNotDuplicate, getMonthlyExpenses, getYearlyExpenses, getAllExpenses, deleteAllExpenses, judgeAndSaveInvoice, Expense } from '@/lib/supabase'
+import { insertExpenseIfNotDuplicate, getMonthlyExpenses, getYearlyExpenses, getAllExpenses, deleteAllExpenses, judgeAndSaveInvoice, createExportToken, Expense } from '@/lib/supabase'
 
 export const maxDuration = 60
 
@@ -295,7 +295,29 @@ async function handleTextMessage(replyToken: string, userId: string, text: strin
 
   if (n.includes('使い方') || n.includes('つかいかた')) {
     await replyMessage(replyToken, [
-      textMessage('📖 経費Bot 使い方\n\n【基本操作】\n📷 レシート写真を送る\n　→ 自動で経費登録\n\n📄 CSVファイルを送る\n　→ 一括登録・科目自動分類\n\n【集計コマンド】\n・今月の経費まとめて\n・先月の経費まとめて\n・2025年12月の経費まとめて\n・今年の経費まとめて\n・全期間の経費まとめて\n\n【CSV出力】\n・今月の経費をCSVで\n・先月の経費をCSVで\n・〇月の経費をCSVで\n\n【データ管理】\n・「プライバシーポリシー」\n　→ データ取り扱い方針を表示\n・「データを削除して」\n　→ 全経費データの削除を開始\n・「削除を確認」\n　→ 削除を実行（取り消し不可）'),
+      textMessage('📖 経費Bot 使い方\n\n【基本操作】\n📷 レシート写真を送る\n　→ 自動で経費登録\n\n📄 CSVファイルを送る\n　→ 一括登録・科目自動分類\n\n【集計コマンド】\n・今月の経費まとめて\n・先月の経費まとめて\n・2025年12月の経費まとめて\n・今年の経費まとめて\n・全期間の経費まとめて\n\n【CSV出力】\n・今月の経費をCSVで\n・先月の経費をCSVで\n・〇月の経費をCSVで\n\n【税理士向けCSVエクスポート】\n・今月のCSVを出力\n・先月のCSVを出力\n・〇月のCSVを出力\n　→ インボイス判定・控除率も含むダウンロード用リンクを発行（24時間有効）\n\n【データ管理】\n・「プライバシーポリシー」\n　→ データ取り扱い方針を表示\n・「データを削除して」\n　→ 全経費データの削除を開始\n・「削除を確認」\n　→ 削除を実行（取り消し不可）'),
+    ])
+    return
+  }
+
+  const isExportRequest = n.includes('csvを出力') || n.includes('csv出力')
+  if (isExportRequest) {
+    const target = parseTarget(n)
+    if (!target || target.type !== 'month') {
+      await replyMessage(replyToken, [
+        textMessage('CSVエクスポートは月単位で指定してください。例：「今月のCSVを出力」「先月のCSVを出力」「6月のCSVを出力」'),
+      ])
+      return
+    }
+
+    const { token, expiresAt } = await createExportToken(userId, target.year, target.month)
+    const downloadUrl = `https://line-keihi-bot.vercel.app/api/export/${token}`
+    const expiresLabel = new Date(expiresAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+
+    await replyMessage(replyToken, [
+      textMessage(
+        `📥 ${target.label}のCSVをダウンロードできます（税理士向け・インボイス判定情報を含む）\n\n${downloadUrl}\n\n⚠️ このリンクは ${expiresLabel} まで有効です。`
+      ),
     ])
     return
   }
