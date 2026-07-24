@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { parse } from 'csv-parse/sync'
 
 export const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -70,39 +71,77 @@ export interface ClassifiedExpense {
   rate_breakdown_amount?: number
 }
 
+// CSVの行分割はcsv-parseによる決定的な処理とし、AIには1行ごとの分類のみを行わせる。
+// これにより「複数行が1件に合算される」ような非決定的な挙動を構造的に防ぐ。
 export async function classifyCsvExpenses(csvContent: string): Promise<ClassifiedExpense[]> {
+  let records: Record<string, string>[]
+  try {
+    records = parse(csvContent, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+    })
+  } catch (err) {
+    throw new Error(`CSVの解析に失敗しました: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  if (!records.length) return []
+
+  const results = await Promise.all(records.map((record) => classifyCsvRow(record)))
+
+  const failedRows = results
+    .map((r, i) => (r === null ? i + 1 : null))
+    .filter((i): i is number => i !== null)
+
+  if (failedRows.length > 0) {
+    throw new Error(
+      `CSVの一部の行を分類できませんでした（${failedRows.length}/${records.length}件、行番号: ${failedRows.join(', ')}）`
+    )
+  }
+
+  if (results.length !== records.length) {
+    // Promise.allの結果は入力順・件数と1:1のはずだが、念のため防御的に検証する
+    throw new Error(`CSV行数（${records.length}）と分類結果件数（${results.length}）が一致しません`)
+  }
+
+  return results as ClassifiedExpense[]
+}
+
+async function classifyCsvRow(record: Record<string, string>): Promise<ClassifiedExpense | null> {
+  const rowText = Object.entries(record)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join('\n')
+
   const response = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',
-    max_tokens: 4096,
+    max_tokens: 512,
     messages: [
       {
         role: 'user',
-        content: `以下のCSVデータを経費として分類してください。
-各行を解析し、以下のJSON配列形式で返してください（他のテキストは含めないこと）:
-[
-  {
-    "date": "YYYY-MM-DD形式の日付",
-    "amount": 数値,
-    "vendor": "取引先名",
-    "category": "勘定科目（交通費/食費/消耗品費/接待費/通信費/その他のいずれか）",
-    "memo": "備考（任意）",
-    "registration_number_raw": "インボイス登録番号（Tから始まる番号）のT以降の数字部分。CSVにその列がある場合のみ記載し、推測はしないこと。ない場合は空文字",
-    "rate_breakdown_amount": 数値（税率ごとの合計金額の列がCSVにある場合のみ記載し、推測はしないこと。ない場合は0）
-  }
-]
+        content: `以下は経費CSVの1行分のデータです。この1行のみを経費として分類し、
+以下のJSONオブジェクト形式で返してください（配列にせず、必ずオブジェクト1つのみ。他のテキストは含めないこと）:
+{
+  "date": "YYYY-MM-DD形式の日付",
+  "amount": 数値,
+  "vendor": "取引先名",
+  "category": "勘定科目（交通費/食費/消耗品費/接待費/通信費/その他のいずれか）",
+  "memo": "備考（任意）",
+  "registration_number_raw": "インボイス登録番号（Tから始まる番号）のT以降の数字部分。この行にその列がある場合のみ記載し、推測はしないこと。ない場合は空文字",
+  "rate_breakdown_amount": 数値（税率ごとの合計金額の列がこの行にある場合のみ記載し、推測はしないこと。ない場合は0）
+}
 
-CSVデータ:
-${csvContent}`,
+CSVの1行（列名: 値）:
+${rowText}`,
       },
     ],
   })
 
   const text = response.content[0].type === 'text' ? response.content[0].text : ''
   try {
-    const jsonMatch = text.match(/\[[\s\S]*\]/)
-    if (!jsonMatch) return []
-    return JSON.parse(jsonMatch[0]) as ClassifiedExpense[]
+    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) return null
+    return JSON.parse(jsonMatch[0]) as ClassifiedExpense
   } catch {
-    return []
+    return null
   }
 }
