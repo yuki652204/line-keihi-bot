@@ -108,17 +108,18 @@ export async function classifyCsvExpenses(csvContent: string): Promise<Classifie
 }
 
 async function classifyCsvRow(record: Record<string, string>): Promise<ClassifiedExpense | null> {
-  const rowText = Object.entries(record)
-    .map(([key, value]) => `${key}: ${value}`)
-    .join('\n')
+  try {
+    const rowText = Object.entries(record)
+      .map(([key, value]) => `${key}: ${value}`)
+      .join('\n')
 
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 512,
-    messages: [
-      {
-        role: 'user',
-        content: `以下は経費CSVの1行分のデータです。この1行のみを経費として分類し、
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 512,
+      messages: [
+        {
+          role: 'user',
+          content: `以下は経費CSVの1行分のデータです。この1行のみを経費として分類し、
 以下のJSONオブジェクト形式で返してください（配列にせず、必ずオブジェクト1つのみ。他のテキストは含めないこと）:
 {
   "date": "YYYY-MM-DD形式の日付",
@@ -132,16 +133,16 @@ async function classifyCsvRow(record: Record<string, string>): Promise<Classifie
 
 CSVの1行（列名: 値）:
 ${rowText}`,
-      },
-    ],
-  })
+        },
+      ],
+    })
 
-  const text = response.content[0].type === 'text' ? response.content[0].text : ''
-  try {
+    const text = response.content[0].type === 'text' ? response.content[0].text : ''
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (!jsonMatch) return null
     return JSON.parse(jsonMatch[0]) as ClassifiedExpense
-  } catch {
+  } catch (err) {
+    console.error('Error in classifyCsvRow:', err)
     return null
   }
 }

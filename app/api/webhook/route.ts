@@ -134,22 +134,35 @@ async function processFileInBackground(userId: string, messageId: string) {
     let skipped = 0
     let total = 0
     let needsReview = 0
+    // [DEBUG] CSV合算調査用の一時的な行ごとステータス記録。確認後に削除すること。
+    const rowStatuses: string[] = []
 
-    for (const expense of expenses) {
+    for (let i = 0; i < expenses.length; i++) {
+      const expense = expenses[i]
+      const rowLabel = `${i + 1}. ¥${expense.amount} ${expense.vendor}`
       const date = expense.date || new Date().toISOString().split('T')[0]
       const category = expense.category || 'その他'
 
-      const result = await insertExpenseIfNotDuplicate({
-        line_user_id: userId,
-        date,
-        amount: expense.amount,
-        vendor: expense.vendor || '不明',
-        category,
-        memo: expense.memo,
-      })
+      let result
+      try {
+        result = await insertExpenseIfNotDuplicate({
+          line_user_id: userId,
+          date,
+          amount: expense.amount,
+          vendor: expense.vendor || '不明',
+          category,
+          memo: expense.memo,
+        })
+      } catch (insertErr) {
+        console.error('Error in insertExpenseIfNotDuplicate (CSV):', insertErr)
+        rowStatuses.push(`${rowLabel} → ❌ insertエラー: ${insertErr instanceof Error ? insertErr.message : String(insertErr)}`)
+        continue
+      }
+
       if (result.inserted) {
         inserted++
         total += expense.amount
+        rowStatuses.push(`${rowLabel} → ✅ 登録成功`)
 
         try {
           const rawNumber = expense.registration_number_raw || null
@@ -173,8 +186,11 @@ async function processFileInBackground(userId: string, messageId: string) {
         }
       } else {
         skipped++
+        rowStatuses.push(`${rowLabel} → ⚠️ 重複スキップ`)
       }
     }
+
+    await pushMessage(userId, [textMessage(`[DEBUG] 行ごとの処理結果:\n${rowStatuses.join('\n')}`)])
 
     const skipNote = skipped > 0 ? `\n⚠️ 重複スキップ: ${skipped}件` : ''
     const reviewNote = needsReview > 0 ? `\n📋 インボイス要確認: ${needsReview}件\n　（CSVに登録番号列がない場合、該当なしとして要確認になります）` : ''
