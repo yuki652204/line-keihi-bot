@@ -50,13 +50,17 @@ create table if not exists invoice_judgments (
       'EXC_OCR_MISREAD',
       'EXC_NO_NUMBER_HIGH',
       'EXC_RATE_MISSING',
-      'EXC_UNVERIFIED_NUMBER'
+      'EXC_UNVERIFIED_NUMBER',
+      'EXC_SHOGAKU_TOKUREI',
+      'EXC_NO_NUMBER_LOW'
     )
   ),
   comment text,
   registration_number_raw text,
   registration_number text,
   rate_breakdown_amount integer,
+  shogaku_tokurei_applied boolean,
+  shogaku_tokurei_period_valid boolean,
   judged_at timestamptz default now(),
   created_at timestamptz default now()
 );
@@ -119,3 +123,51 @@ create trigger trg_invoice_judgments_check_line_user_id
   before insert on invoice_judgments
   for each row
   execute function invoice_judgments_check_line_user_id();
+
+-- 事業者ごとの設定（少額特例の対象事業者かどうかなど。line_user_idごとに1行）
+create table if not exists business_settings (
+  line_user_id text primary key,
+  shogaku_tokurei_eligible boolean not null default false,
+  created_at timestamptz default now()
+);
+
+alter table business_settings enable row level security;
+
+create policy "自分のデータのみ参照"
+  on business_settings for select
+  using (line_user_id = ((current_setting('request.jwt.claims'::text, true))::json ->> 'line_user_id'::text));
+
+create policy "自分のデータのみ挿入"
+  on business_settings for insert
+  with check (line_user_id = ((current_setting('request.jwt.claims'::text, true))::json ->> 'line_user_id'::text));
+
+create policy "自分のデータのみ更新"
+  on business_settings for update
+  using (line_user_id = ((current_setting('request.jwt.claims'::text, true))::json ->> 'line_user_id'::text));
+
+-- business_settings 初期データ（売上規模の要件を満たさないため少額特例の対象外）
+insert into business_settings (line_user_id, shogaku_tokurei_eligible)
+values ('U1b8a03e585682142e110aa0ae302b6a9', false);
+
+-- ここから既存の invoice_judgments テーブル（作成済み）へのマイグレーション。
+-- 上のCREATE TABLE定義は新規構築用の最新版であり、既存DBには反映されないため、
+-- 実際に反映するには以下を実行すること。
+alter table invoice_judgments add column if not exists shogaku_tokurei_applied boolean;
+alter table invoice_judgments add column if not exists shogaku_tokurei_period_valid boolean;
+
+-- reason_codeのcheck制約に少額特例関連の2コードを追加。
+-- 制約名はPostgresのデフォルト命名規則（<table>_<column>_check）を想定しているため、
+-- 実行時にエラーになる場合は以下で実際の制約名を確認してから読み替えること:
+--   select conname from pg_constraint where conrelid = 'invoice_judgments'::regclass and contype = 'c';
+alter table invoice_judgments drop constraint if exists invoice_judgments_reason_code_check;
+alter table invoice_judgments add constraint invoice_judgments_reason_code_check check (
+  reason_code in (
+    'EXC_TRANSIT',
+    'EXC_OCR_MISREAD',
+    'EXC_NO_NUMBER_HIGH',
+    'EXC_RATE_MISSING',
+    'EXC_UNVERIFIED_NUMBER',
+    'EXC_SHOGAKU_TOKUREI',
+    'EXC_NO_NUMBER_LOW'
+  )
+);
