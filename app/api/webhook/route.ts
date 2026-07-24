@@ -199,7 +199,16 @@ async function processFileInBackground(userId: string, messageId: string) {
     ])
   } catch (err) {
     console.error('Error in file background processing:', err)
-    await pushMessage(userId, [textMessage('❌ CSV処理中にエラーが発生しました。もう一度お試しください。')])
+    const message = err instanceof Error ? err.message : String(err)
+    const stack = err instanceof Error && err.stack ? err.stack.slice(0, 800) : '(スタックなし)'
+    try {
+      await pushMessage(userId, [
+        textMessage('❌ CSV処理中にエラーが発生しました。もう一度お試しください。'),
+        textMessage(`[DEBUG] エラー内容:\n${message}\n\nスタック:\n${stack}`),
+      ])
+    } catch (notifyErr) {
+      console.error('Error while notifying CSV processing failure:', notifyErr)
+    }
   }
 }
 
