@@ -37,7 +37,9 @@ export async function getLineFileContent(messageId: string): Promise<string> {
     },
   })
   const arrayBuffer = await response.arrayBuffer()
-  return Buffer.from(arrayBuffer).toString('utf-8')
+  const buffer = Buffer.from(arrayBuffer)
+  console.log('[DEBUG] getLineFileContent hex (first 100 chars):', buffer.toString('hex').slice(0, 100))
+  return buffer.toString('utf-8')
 }
 
 export interface LineMessage {
