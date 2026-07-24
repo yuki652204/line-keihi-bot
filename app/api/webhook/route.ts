@@ -115,6 +115,16 @@ async function processFileInBackground(userId: string, messageId: string) {
     const csvContent = await getLineFileContent(messageId)
     const expenses = await classifyCsvExpenses(csvContent)
 
+    // [DEBUG] CSV合算調査用の一時的なデバッグ通知。確認後に削除すること。
+    const debugItems = expenses
+      .slice(0, 20)
+      .map((e, i) => `${i + 1}. ¥${e.amount} ${e.vendor}`)
+      .join('\n')
+    await pushMessage(userId, [
+      textMessage(`[DEBUG] classifyCsvExpenses結果: ${expenses.length}件\n${debugItems || '（0件）'}`),
+      textMessage(`[DEBUG] getLineFileContent先頭200文字:\n${csvContent.slice(0, 200)}`),
+    ])
+
     if (!expenses.length) {
       await pushMessage(userId, [textMessage('❌ CSVから経費情報を抽出できませんでした。')])
       return
