@@ -143,11 +143,15 @@ interface JudgeInvoiceOutput {
 }
 
 // CLAUDE.md記載のjudgeInvoice疑似コードの実装。
-// EXC_TRANSIT / EXC_UNVERIFIED_NUMBER は理由コード一覧には含まれるが、
-// この判定ロジックでは発生しない（別経路での付与を想定）。
+// EXC_UNVERIFIED_NUMBER（国税庁公表サイトとの照合）は外部API連携が必要なため、
+// このジャッジロジックではスコープ外として保留し、この関数からは発生しない。
 export function judgeInvoice(receipt: JudgeInvoiceInput): JudgeInvoiceOutput {
   if (receipt.amount < 30000 && receipt.category === '交通費') {
-    return { status: '適格扱い', reason_code: null, comment: null }
+    return {
+      status: '適格扱い',
+      reason_code: 'EXC_TRANSIT',
+      comment: '3万円未満の交通費のため、公共交通機関特例により登録番号なしでも適格請求書とみなされます',
+    }
   }
 
   if (receipt.registration_number_raw && receipt.registration_number_raw.length !== 13) {
