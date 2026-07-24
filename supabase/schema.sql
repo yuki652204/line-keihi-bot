@@ -24,6 +24,20 @@ create table if not exists keihi_export_tokens (
 create index if not exists idx_keihi_export_tokens_expires
   on keihi_export_tokens (expires_at);
 
+-- RLS: keihi_export_tokens は keihi_expenses と同じ考え方で本人のデータのみ操作可
+-- （createExportTokenは本人スコープのJWTクライアントでinsertするため必要。
+--   検証はservice_roleで行うためselectポリシーはvalidateExportToken自体には不要だが、
+--   本人が自分のトークン履歴を参照できるよう用意しておく）
+alter table keihi_export_tokens enable row level security;
+
+create policy "自分のデータのみ参照"
+  on keihi_export_tokens for select
+  using (line_user_id = ((current_setting('request.jwt.claims'::text, true))::json ->> 'line_user_id'::text));
+
+create policy "自分のデータのみ挿入"
+  on keihi_export_tokens for insert
+  with check (line_user_id = ((current_setting('request.jwt.claims'::text, true))::json ->> 'line_user_id'::text));
+
 -- インボイス控除率マスタ（経過措置の日付範囲ごとの控除率）
 create table if not exists invoice_deduction_rates (
   id uuid primary key default gen_random_uuid(),
