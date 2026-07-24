@@ -10,6 +10,8 @@ export interface ExtractedExpense {
   vendor: string
   category: string
   memo?: string
+  registration_number_raw?: string
+  rate_breakdown_amount?: number
 }
 
 export async function extractExpenseFromImage(imageBase64: string, mimeType: string): Promise<ExtractedExpense | null> {
@@ -37,7 +39,9 @@ export async function extractExpenseFromImage(imageBase64: string, mimeType: str
   "amount": 数値（税込合計金額）,
   "vendor": "取引先・店舗名",
   "category": "勘定科目（交通費/食費/消耗品費/接待費/通信費/その他のいずれか）",
-  "memo": "備考（任意）"
+  "memo": "備考（任意）",
+  "registration_number_raw": "インボイス登録番号（Tから始まる番号）のT以降の数字部分。見つかった通りにそのまま記載し、桁数の補正はしないこと。見つからない場合は空文字",
+  "rate_breakdown_amount": 数値（レシートに記載された税率ごとの合計金額のうち、いずれか1つの金額。記載がなければ0）
 }
 情報が読み取れない場合はそのフィールドを空文字か0にしてください。`,
           },

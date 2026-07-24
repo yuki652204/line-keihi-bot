@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { waitUntil } from '@vercel/functions'
 import { verifyLineSignature, replyMessage, pushMessage, getLineImageContent, getLineFileContent, textMessage } from '@/lib/line'
 import { extractExpenseFromImage, classifyCsvExpenses } from '@/lib/anthropic'
-import { insertExpenseIfNotDuplicate, getMonthlyExpenses, getYearlyExpenses, getAllExpenses, deleteAllExpenses, Expense } from '@/lib/supabase'
+import { insertExpenseIfNotDuplicate, getMonthlyExpenses, getYearlyExpenses, getAllExpenses, deleteAllExpenses, judgeAndSaveInvoice, Expense } from '@/lib/supabase'
 
 export const maxDuration = 60
 
@@ -61,7 +61,7 @@ async function processImageInBackground(userId: string, messageId: string) {
     const date = extracted.date || new Date().toISOString().split('T')[0]
     const vendor = extracted.vendor || '不明'
 
-    const { inserted } = await insertExpenseIfNotDuplicate({
+    const { inserted, data: insertedExpense } = await insertExpenseIfNotDuplicate({
       line_user_id: userId,
       date,
       amount: extracted.amount,
@@ -77,7 +77,32 @@ async function processImageInBackground(userId: string, messageId: string) {
       return
     }
 
-    const resultText = `✅ 経費を登録しました！\n\n📅 日付: ${date}\n💴 金額: ¥${extracted.amount.toLocaleString()}\n🏢 取引先: ${vendor}\n📂 勘定科目: ${extracted.category}${extracted.memo ? `\n📝 備考: ${extracted.memo}` : ''}`
+    let resultText = `✅ 経費を登録しました！\n\n📅 日付: ${date}\n💴 金額: ¥${extracted.amount.toLocaleString()}\n🏢 取引先: ${vendor}\n📂 勘定科目: ${extracted.category}${extracted.memo ? `\n📝 備考: ${extracted.memo}` : ''}`
+
+    try {
+      const rawNumber = extracted.registration_number_raw || null
+      const { judgment } = await judgeAndSaveInvoice(
+        {
+          id: insertedExpense!.id!,
+          line_user_id: userId,
+          date,
+          amount: extracted.amount,
+          category: extracted.category || 'その他',
+        },
+        {
+          registration_number_raw: rawNumber,
+          registration_number: rawNumber && rawNumber.length === 13 ? rawNumber : null,
+          rate_breakdown_amount: extracted.rate_breakdown_amount || null,
+        }
+      )
+
+      if (judgment.status === '要確認' && judgment.comment) {
+        resultText += `\n\n⚠️ インボイス要確認: ${judgment.comment}`
+      }
+    } catch (judgeErr) {
+      console.error('Error in invoice judgment:', judgeErr)
+    }
+
     await pushMessage(userId, [textMessage(resultText)])
   } catch (err) {
     console.error('Error in image background processing:', err)
