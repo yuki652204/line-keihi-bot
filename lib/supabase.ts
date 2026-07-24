@@ -146,12 +146,9 @@ interface JudgeInvoiceOutput {
 // EXC_UNVERIFIED_NUMBER（国税庁公表サイトとの照合）は外部API連携が必要なため、
 // このジャッジロジックではスコープ外として保留し、この関数からは発生しない。
 export function judgeInvoice(receipt: JudgeInvoiceInput): JudgeInvoiceOutput {
-  if (receipt.amount < 30000 && receipt.category === '交通費') {
-    return {
-      status: '適格扱い',
-      reason_code: 'EXC_TRANSIT',
-      comment: '3万円未満の交通費のため、公共交通機関特例により登録番号なしでも適格請求書とみなされます',
-    }
+  // 登録番号・税率別合計金額が揃っていれば、交通費特例を待たず通常の自動判定
+  if (receipt.registration_number && receipt.rate_breakdown_amount) {
+    return { status: '自動判定確定', reason_code: null, comment: null }
   }
 
   if (receipt.registration_number_raw && receipt.registration_number_raw.length !== 13) {
@@ -159,6 +156,15 @@ export function judgeInvoice(receipt: JudgeInvoiceInput): JudgeInvoiceOutput {
       status: '要確認',
       reason_code: 'EXC_OCR_MISREAD',
       comment: '登録番号が13桁と一致しません。画像不鮮明の可能性があるため再確認してください',
+    }
+  }
+
+  // 交通費特例は「登録番号がない場合の救済」なので、登録番号がある場合は適用しない
+  if (!receipt.registration_number && receipt.amount < 30000 && receipt.category === '交通費') {
+    return {
+      status: '適格扱い',
+      reason_code: 'EXC_TRANSIT',
+      comment: '3万円未満の交通費のため、公共交通機関特例により登録番号なしでも適格請求書とみなされます',
     }
   }
 
