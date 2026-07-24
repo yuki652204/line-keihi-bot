@@ -115,16 +115,6 @@ async function processFileInBackground(userId: string, messageId: string) {
     const csvContent = await getLineFileContent(messageId)
     const expenses = await classifyCsvExpenses(csvContent)
 
-    // [DEBUG] CSV合算調査用の一時的なデバッグ通知。確認後に削除すること。
-    const debugItems = expenses
-      .slice(0, 20)
-      .map((e, i) => `${i + 1}. ¥${e.amount} ${e.vendor}`)
-      .join('\n')
-    await pushMessage(userId, [
-      textMessage(`[DEBUG] classifyCsvExpenses結果: ${expenses.length}件\n${debugItems || '（0件）'}`),
-      textMessage(`[DEBUG] getLineFileContent先頭200文字:\n${csvContent.slice(0, 200)}`),
-    ])
-
     if (!expenses.length) {
       await pushMessage(userId, [textMessage('❌ CSVから経費情報を抽出できませんでした。')])
       return
@@ -134,12 +124,8 @@ async function processFileInBackground(userId: string, messageId: string) {
     let skipped = 0
     let total = 0
     let needsReview = 0
-    // [DEBUG] CSV合算調査用の一時的な行ごとステータス記録。確認後に削除すること。
-    const rowStatuses: string[] = []
 
-    for (let i = 0; i < expenses.length; i++) {
-      const expense = expenses[i]
-      const rowLabel = `${i + 1}. ¥${expense.amount} ${expense.vendor}`
+    for (const expense of expenses) {
       const date = expense.date || new Date().toISOString().split('T')[0]
       const category = expense.category || 'その他'
 
@@ -155,14 +141,12 @@ async function processFileInBackground(userId: string, messageId: string) {
         })
       } catch (insertErr) {
         console.error('Error in insertExpenseIfNotDuplicate (CSV):', insertErr)
-        rowStatuses.push(`${rowLabel} → ❌ insertエラー: ${insertErr instanceof Error ? insertErr.message : String(insertErr)}`)
         continue
       }
 
       if (result.inserted) {
         inserted++
         total += expense.amount
-        rowStatuses.push(`${rowLabel} → ✅ 登録成功`)
 
         try {
           const rawNumber = expense.registration_number_raw || null
@@ -186,11 +170,8 @@ async function processFileInBackground(userId: string, messageId: string) {
         }
       } else {
         skipped++
-        rowStatuses.push(`${rowLabel} → ⚠️ 重複スキップ`)
       }
     }
-
-    await pushMessage(userId, [textMessage(`[DEBUG] 行ごとの処理結果:\n${rowStatuses.join('\n')}`)])
 
     const skipNote = skipped > 0 ? `\n⚠️ 重複スキップ: ${skipped}件` : ''
     const reviewNote = needsReview > 0 ? `\n📋 インボイス要確認: ${needsReview}件\n　（CSVに登録番号列がない場合、該当なしとして要確認になります）` : ''
@@ -199,16 +180,7 @@ async function processFileInBackground(userId: string, messageId: string) {
     ])
   } catch (err) {
     console.error('Error in file background processing:', err)
-    const message = err instanceof Error ? err.message : String(err)
-    const stack = err instanceof Error && err.stack ? err.stack.slice(0, 800) : '(スタックなし)'
-    try {
-      await pushMessage(userId, [
-        textMessage('❌ CSV処理中にエラーが発生しました。もう一度お試しください。'),
-        textMessage(`[DEBUG] エラー内容:\n${message}\n\nスタック:\n${stack}`),
-      ])
-    } catch (notifyErr) {
-      console.error('Error while notifying CSV processing failure:', notifyErr)
-    }
+    await pushMessage(userId, [textMessage('❌ CSV処理中にエラーが発生しました。もう一度お試しください。')])
   }
 }
 
