@@ -66,6 +66,8 @@ export interface ClassifiedExpense {
   vendor: string
   category: string
   memo?: string
+  registration_number_raw?: string
+  rate_breakdown_amount?: number
 }
 
 export async function classifyCsvExpenses(csvContent: string): Promise<ClassifiedExpense[]> {
@@ -83,7 +85,9 @@ export async function classifyCsvExpenses(csvContent: string): Promise<Classifie
     "amount": 数値,
     "vendor": "取引先名",
     "category": "勘定科目（交通費/食費/消耗品費/接待費/通信費/その他のいずれか）",
-    "memo": "備考（任意）"
+    "memo": "備考（任意）",
+    "registration_number_raw": "インボイス登録番号（Tから始まる番号）のT以降の数字部分。CSVにその列がある場合のみ記載し、推測はしないこと。ない場合は空文字",
+    "rate_breakdown_amount": 数値（税率ごとの合計金額の列がCSVにある場合のみ記載し、推測はしないこと。ない場合は0）
   }
 ]
 

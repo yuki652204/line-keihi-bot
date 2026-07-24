@@ -123,27 +123,53 @@ async function processFileInBackground(userId: string, messageId: string) {
     let inserted = 0
     let skipped = 0
     let total = 0
+    let needsReview = 0
 
     for (const expense of expenses) {
+      const date = expense.date || new Date().toISOString().split('T')[0]
+      const category = expense.category || 'その他'
+
       const result = await insertExpenseIfNotDuplicate({
         line_user_id: userId,
-        date: expense.date || new Date().toISOString().split('T')[0],
+        date,
         amount: expense.amount,
         vendor: expense.vendor || '不明',
-        category: expense.category || 'その他',
+        category,
         memo: expense.memo,
       })
       if (result.inserted) {
         inserted++
         total += expense.amount
+
+        try {
+          const rawNumber = expense.registration_number_raw || null
+          const { judgment } = await judgeAndSaveInvoice(
+            {
+              id: result.data!.id!,
+              line_user_id: userId,
+              date,
+              amount: expense.amount,
+              category,
+            },
+            {
+              registration_number_raw: rawNumber,
+              registration_number: rawNumber && rawNumber.length === 13 ? rawNumber : null,
+              rate_breakdown_amount: expense.rate_breakdown_amount || null,
+            }
+          )
+          if (judgment.status === '要確認') needsReview++
+        } catch (judgeErr) {
+          console.error('Error in invoice judgment (CSV):', judgeErr)
+        }
       } else {
         skipped++
       }
     }
 
     const skipNote = skipped > 0 ? `\n⚠️ 重複スキップ: ${skipped}件` : ''
+    const reviewNote = needsReview > 0 ? `\n📋 インボイス要確認: ${needsReview}件\n　（CSVに登録番号列がない場合、該当なしとして要確認になります）` : ''
     await pushMessage(userId, [
-      textMessage(`✅ ${inserted}件の経費を登録しました！\n💴 合計: ¥${total.toLocaleString()}${skipNote}`),
+      textMessage(`✅ ${inserted}件の経費を登録しました！\n💴 合計: ¥${total.toLocaleString()}${skipNote}${reviewNote}`),
     ])
   } catch (err) {
     console.error('Error in file background processing:', err)
